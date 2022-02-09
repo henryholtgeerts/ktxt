@@ -1,6 +1,8 @@
 import logo from './logo.svg';
 import './App.css';
 
+import StartShowButton from './components/start-show-button'
+
 function App() {
   return (
     <div className="App">
@@ -9,14 +11,7 @@ function App() {
         <p>
           KTXT Lives!
         </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
+        <StartShowButton/>
       </header>
     </div>
   );
