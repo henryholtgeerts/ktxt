@@ -21,12 +21,12 @@ function App() {
   };
   
   // Initialize Firebase
-  const app = initializeApp(firebaseConfig);
+  initializeApp(firebaseConfig);
   const db = getFirestore();
 
   const [ topic, setTopic ] = useState(null);
 
-  const unsub = onSnapshot(doc(db, "shows", "currentShow"), (doc) => {
+  onSnapshot(doc(db, "shows", "currentShow"), (doc) => {
     const data = doc.data();
     data && setTopic(data.topic);
     console.log("Current data: ", doc.data());  
