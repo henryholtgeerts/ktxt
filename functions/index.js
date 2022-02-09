@@ -1,6 +1,7 @@
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const axios = require("axios");
+const cors = require("cors");
 admin.initializeApp();
 
 // // Create and Deploy Your First Cloud Functions
@@ -31,8 +32,20 @@ exports.helloWorld = functions.https.onRequest(async (request, response) => {
               .add({topic: request.body.Body});
           await admin.firestore().collection("callers")
               .doc(request.body.From)
-              .set({suggestedTopic: topic, lastPrompt: null});
+              .set({suggestedTopic: topic, lastPrompt: null}, {merge: true});
           messageBody = "Got it, thanks!";
+          break;
+        } case "requestTopicResponse": {
+          const topicResponse = await admin.firestore().collection("shows")
+              .doc("currentShow")
+              .collection("topicResponses")
+              .add({topicResponse: request.body.Body, caller: data.name});
+          await admin.firestore().collection("callers")
+              .doc(request.body.From)
+              .set({
+                topicResponse: topicResponse,
+                lastPrompt: null,
+              }, {merge: true});
           break;
         } default: {
           messageBody = `Hello again, ${data.name}!`;
@@ -44,16 +57,19 @@ exports.helloWorld = functions.https.onRequest(async (request, response) => {
       to: request.body.From,
       body: messageBody,
     });
+    response.status(200).send();
   } catch (error) {
     functions.logger.error(error);
   }
 });
 
-// Listen for updates to any `user` document.
 exports.onCallerUpdate = functions.firestore
     .document("callers/{docId}")
     .onUpdate(async (change, context) => {
       try {
+        const currentShowSnapshot = await admin.firestore().collection("shows")
+            .doc("currentShow").get();
+        const currentShowData = currentShowSnapshot.data();
         // Retrieve the current and previous value
         const data = change.after.data();
         const previousData = change.before.data();
@@ -68,13 +84,23 @@ exports.onCallerUpdate = functions.firestore
           return null;
         }
 
-        if ( !data.suggestedTopic ) {
+        if ( !data.suggestedTopic && currentShowData.topic === null ) {
           await admin.firestore().collection("messages").add({
             to: change.after.ref.id,
             body: "Do you have a topic suggestion for today's show?",
           });
-          return change.after.ref.set({
+          change.after.ref.set({
             lastPrompt: "suggestTopic",
+          }, {merge: true});
+        }
+
+        if ( !data.topicResponse && currentShowData.topic !== null ) {
+          await admin.firestore().collection("messages").add({
+            to: change.after.ref.id,
+            body: `Respond to this topic: ${currentShowData.topic}`,
+          });
+          change.after.ref.set({
+            lastPrompt: "requestTopicResponse",
           }, {merge: true});
         }
       } catch (error) {
@@ -82,59 +108,65 @@ exports.onCallerUpdate = functions.firestore
       }
     });
 
-exports.startShow = functions.https.onRequest(async (request, response) => {
-  try {
-    const snapshot = await admin.firestore().collection("shows")
-        .doc("currentShow").get();
-    if (!snapshot.exists) {
-      // No caller doc exists, create one
-      await admin.firestore().collection("shows")
-          .doc("currentShow")
-          .set({topic: null});
-      await axios({
-        method: "post",
-        url: "https://api.cronhooks.io/schedules",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${functions.config().cronhooks.key}`,
-        },
-        data: {
-          title: "Pick a topic for the show",
-          url: "https://us-central1-ktxt-firebase.cloudfunctions.net/pickTopic",
-          timezone: "africa/abidjan",
-          method: "GET",
-          contentType: "application/json; charset=utf-8",
-          isRecurring: false,
-          runAt: new Date( new Date().getTime() + 2*60000).toISOString(),
-          sendCronhookObject: false,
-          sendFailureAlert: false,
-        },
-      });
-      return response.json({
-        status: "showStarted",
-        payload: snapshot.data(),
-      });
-    } else {
-      return response.json({
-        status: "showInProgress",
-        payload: snapshot.data(),
+exports.startShow = functions.https.onRequest((request, response) =>
+  cors()(request, response, async () => {
+    try {
+      const snapshot = await admin.firestore().collection("shows")
+          .doc("currentShow").get();
+      if (!snapshot.exists) {
+        // No caller doc exists, create one
+        await admin.firestore().collection("shows")
+            .doc("currentShow")
+            .set({topic: null});
+        await axios({
+          method: "post",
+          url: "https://api.cronhooks.io/schedules",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${functions.config().cronhooks.key}`,
+          },
+          data: {
+            title: "Pick a topic for the show",
+            url: "https://us-central1-ktxt-firebase.cloudfunctions.net/pickTopic",
+            timezone: "africa/abidjan",
+            method: "GET",
+            contentType: "application/json; charset=utf-8",
+            isRecurring: false,
+            runAt: new Date( new Date().getTime() + 2*60000).toISOString(),
+            sendCronhookObject: false,
+            sendFailureAlert: false,
+          },
+        });
+        response.json({
+          status: "showStarted",
+          payload: snapshot.data(),
+        });
+      } else {
+        response.json({
+          status: "showInProgress",
+          payload: snapshot.data(),
+        });
+      }
+    } catch (error) {
+      response.json({
+        status: "error",
+        error: error,
       });
     }
-  } catch (error) {
-    return response.json({
-      status: "error",
-      error: error,
-    });
-  }
-});
+  }),
+);
 
-exports.pickTopic = functions.https.onRequest(async (request, response) => {
-  try {
-    await admin.firestore().collection("shows")
-        .doc("currentShow").set({
-          topic: "picked a topic!",
-        }, {merge: true});
-  } catch (error) {
-    functions.logger.error(error);
-  }
+exports.pickTopic = functions.https.onRequest( async (request, response) => {
+  const topics = [];
+  const snapshot = await admin.firestore().collection("topics").get();
+  snapshot.forEach((doc) => {
+    topics.push(doc.data().topic);
+  });
+  const pickedTopic = topics[Math.floor(Math.random()*topics.length)];
+  await admin.firestore().collection("shows")
+      .doc("currentShow").set({
+        topic: pickedTopic,
+      }, {merge: true})
+      .catch((err) => response.status(400).end(err));
+  response.status(200).send();
 });
