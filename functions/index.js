@@ -6,7 +6,7 @@ admin.initializeApp();
 
 // // Create and Deploy Your First Cloud Functions
 // // https://firebase.google.com/docs/functions/write-firebase-functions
-//
+
 exports.helloWorld = functions.https.onRequest(async (request, response) => {
   try {
     const snapshot = await admin.firestore().collection("callers")
@@ -39,11 +39,28 @@ exports.helloWorld = functions.https.onRequest(async (request, response) => {
           const topicResponse = await admin.firestore().collection("shows")
               .doc("currentShow")
               .collection("topicResponses")
-              .add({topicResponse: request.body.Body, caller: data.name});
+              .add({
+                topicResponse: request.body.Body,
+                caller: data.name,
+                callerId: request.body.From,
+              });
           await admin.firestore().collection("callers")
               .doc(request.body.From)
               .set({
                 topicResponse: topicResponse,
+                lastPrompt: null,
+              }, {merge: true});
+          messageBody = "Got it, thanks!";
+          break;
+        } case "requestHostResponse": {
+          await admin.firestore().collection("shows")
+              .doc("currentShow")
+              .collection("topicResponses")
+              .doc(data.respondingTo)
+              .set({hostResponse: request.body.Body});
+          await admin.firestore().collection("callers")
+              .doc(request.body.From)
+              .set({
                 lastPrompt: null,
               }, {merge: true});
           break;
@@ -170,3 +187,59 @@ exports.pickTopic = functions.https.onRequest( async (request, response) => {
       .catch((err) => response.status(400).end(err));
   response.status(200).send();
 });
+
+exports.onPickedTopic = functions.firestore
+    .document("shows/currentShow")
+    .onUpdate(async (change, context) => {
+      try {
+        const data = change.after.data();
+
+        const callersSnapshot = await admin.firestore()
+            .collection("callers").get();
+        callersSnapshot.forEach( async (doc) => {
+          await admin.firestore().collection("messages").add({
+            to: doc.id,
+            body:
+              `In 30 words or less, any thoughts on this topic: ${data.topic}`,
+          });
+          doc.set({
+            lastPrompt: "requestTopicResponse",
+          }, {merge: true});
+        });
+      } catch (error) {
+        functions.logger.error(error);
+      }
+    });
+
+exports.onUpdateTopicResponse = functions.firestore
+    .document("shows/currentShow/topicResponses/{docId}")
+    .onUpdate(async (change, context) => {
+      try {
+        // Retrieve the current and previous value
+        const data = change.after.data();
+        const callersSnapshot = await admin.firestore()
+            .collection("callers").get();
+
+        callersSnapshot.forEach( async (caller) => {
+          if (caller.id !== data.callerId) {
+            if (caller.data().topicResponse) {
+              if (!caller.data().respondingTo) {
+                await admin.firestore().collection("messages").add({
+                  to: caller.id,
+                  body:
+                    `As the show's host: In 10 words or less,
+                     reply to this: ${data.topicResponse}`,
+                });
+                caller.set({
+                  lastPrompt: "requestHostReponse",
+                  respondingTo: context.docId,
+                }, {merge: true});
+              }
+            }
+          }
+        });
+      } catch (error) {
+        functions.logger.error(error);
+      }
+    });
+
