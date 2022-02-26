@@ -2,9 +2,9 @@ import logo from './logo.svg';
 import './App.css';
 
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, onSnapshot } from "firebase/firestore";
+import { getFirestore, doc, onSnapshot, collection } from "firebase/firestore";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import StartShowButton from './components/start-show-button'
 
@@ -25,12 +25,32 @@ function App() {
   const db = getFirestore();
 
   const [ topic, setTopic ] = useState(null);
+  const [ numberOfCallers, setNumberOfCallers ] = useState(null);
+  const [ topicResponses, setTopicResponses ] = useState(null);
+  const [ showReady, setShowReady ] = useState(false);
 
   onSnapshot(doc(db, "shows", "currentShow"), (doc) => {
     const data = doc.data();
     data && setTopic(data.topic);
-    console.log("Current data: ", doc.data());  
+    data && setNumberOfCallers(data.numberOfCallers);
   });
+
+  onSnapshot(collection(db, "shows/currentShow/topicResponses"), (snapshot) => {
+    const newResponses = [];
+    snapshot.forEach(doc => {
+      newResponses.push({
+        response: doc.data().topicResponse,
+        caller: doc.data().caller,
+      })
+    });
+    setTopicResponses(newResponses);
+  });
+
+  useEffect(() => {
+    if ( numberOfCallers === topicResponses.length) {
+      setShowReady(true);
+    }
+  }, [numberOfCallers, topicResponses])
 
   return (
     <div className="App">
@@ -39,7 +59,13 @@ function App() {
         <p>
           KTXT Lives!
         </p>
+        <p>{showReady && "Show is ready"}</p>
         <p>Topic: {topic}</p>
+        <div>
+          { topicResponses && topicResponses.map((response) => {
+            return <p>{response.response} by {response.caller}</p>
+          }) }
+        </div>
         <StartShowButton/>
       </header>
     </div>

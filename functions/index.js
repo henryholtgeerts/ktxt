@@ -179,10 +179,12 @@ exports.pickTopic = functions.https.onRequest( async (request, response) => {
   snapshot.forEach((doc) => {
     topics.push(doc.data().topic);
   });
+  const callersSnapshot = await admin.firestore().collection("topics").get();
   const pickedTopic = topics[Math.floor(Math.random()*topics.length)];
   await admin.firestore().collection("shows")
       .doc("currentShow").set({
         topic: pickedTopic,
+        numberOfCallers: callersSnapshot.size,
       }, {merge: true})
       .catch((err) => response.status(400).end(err));
   response.status(200).send();
@@ -213,38 +215,3 @@ exports.onPickedTopic = functions.firestore
         functions.logger.error(error);
       }
     });
-
-exports.onUpdateTopicResponse = functions.firestore
-    .document("shows/currentShow/topicResponses/{docId}")
-    .onUpdate(async (change, context) => {
-      try {
-        // Retrieve the current and previous value
-        const data = change.after.data();
-        const callersSnapshot = await admin.firestore()
-            .collection("callers").get();
-
-        callersSnapshot.forEach( async (caller) => {
-          if (caller.id !== data.callerId) {
-            if (caller.data().topicResponse) {
-              if (!caller.data().respondingTo) {
-                await admin.firestore().collection("messages").add({
-                  to: caller.id,
-                  body:
-                    `As the show's host: In 10 words or less,
-                     reply to this: ${data.topicResponse}`,
-                });
-                await admin.firestore()
-                    .collection("callers")
-                    .doc(caller.id)
-                    .set({
-                      lastPrompt: "requestHostResponse",
-                    }, {merge: true});
-              }
-            }
-          }
-        });
-      } catch (error) {
-        functions.logger.error(error);
-      }
-    });
-
