@@ -149,7 +149,7 @@ exports.startShow = functions.https.onRequest((request, response) =>
             method: "GET",
             contentType: "application/json; charset=utf-8",
             isRecurring: false,
-            runAt: new Date( new Date().getTime() + 2*60000).toISOString(),
+            runAt: new Date( new Date().getTime() + 1*60000).toISOString(),
             sendCronhookObject: false,
             sendFailureAlert: false,
           },
@@ -197,14 +197,17 @@ exports.onPickedTopic = functions.firestore
         const callersSnapshot = await admin.firestore()
             .collection("callers").get();
         callersSnapshot.forEach( async (doc) => {
+          await admin.firestore()
+              .collection("callers")
+              .doc(doc.id)
+              .set({
+                lastPrompt: "requestTopicResponse",
+              }, {merge: true});
           await admin.firestore().collection("messages").add({
             to: doc.id,
             body:
               `In 30 words or less, any thoughts on this topic: ${data.topic}`,
           });
-          doc.set({
-            lastPrompt: "requestTopicResponse",
-          }, {merge: true});
         });
       } catch (error) {
         functions.logger.error(error);
@@ -230,10 +233,12 @@ exports.onUpdateTopicResponse = functions.firestore
                     `As the show's host: In 10 words or less,
                      reply to this: ${data.topicResponse}`,
                 });
-                caller.set({
-                  lastPrompt: "requestHostReponse",
-                  respondingTo: context.docId,
-                }, {merge: true});
+                await admin.firestore()
+                    .collection("callers")
+                    .doc(caller.id)
+                    .set({
+                      lastPrompt: "requestHostResponse",
+                    }, {merge: true});
               }
             }
           }
