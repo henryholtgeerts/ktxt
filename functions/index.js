@@ -2,6 +2,13 @@ const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const axios = require("axios");
 const cors = require("cors");
+const textToSpeech = require("@google-cloud/text-to-speech");
+const path = require("path");
+const os = require("os");
+const fs = require("fs");
+const util = require("util");
+const uuid = require("uuid");
+
 admin.initializeApp();
 
 // // Create and Deploy Your First Cloud Functions
@@ -215,3 +222,34 @@ exports.onPickedTopic = functions.firestore
         functions.logger.error(error);
       }
     });
+
+exports.tts = functions.https.onRequest( async (request, response) => {
+  const client = new textToSpeech.TextToSpeechClient();
+  const textRequest = {
+    input: {text: request.body.text},
+    // Select the language and SSML voice gender (optional)
+    voice: {
+      languageCode: "en-US",
+      ssmlGender: "NEUTRAL",
+    },
+    // select the type of audio encoding
+    audioConfig: {audioEncoding: "MP3"},
+  };
+
+  // Performs the text-to-speech request
+  const [ttsResponse] = await client.synthesizeSpeech(textRequest);
+
+  const id = uuid.v4();
+
+  const tempFilePath = path.join(os.tmpdir(), `tmp-${id}`);
+  const bucket = admin.storage().bucket("ktxt-firebase");
+
+  const writeFile = util.promisify(fs.writeFile);
+  await writeFile(tempFilePath, ttsResponse.audioContent, "binary");
+
+  await bucket.upload(tempFilePath, {
+    destination: `/tts/${id}.mp3`,
+  });
+  fs.unlinkSync(tempFilePath);
+  response.status(200).json({id});
+});
